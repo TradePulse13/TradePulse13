@@ -1,0 +1,50 @@
+import os
+import ccxt
+import matplotlib.pyplot as plt
+import pandas as pd
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.utils import executor
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+bot = Bot(token=TELEGRAM_TOKEN)
+dp = Dispatcher(bot)
+exchange = ccxt.binance()
+
+keyboard = InlineKeyboardMarkup(row_width=1).add(
+    InlineKeyboardButton("🔍 Отримати сигнал зараз", callback_data="get_signal")
+)
+
+def get_signal(symbol='BTC/USDT'):
+    ohlcv = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=100)
+    df = pd.DataFrame(ohlcv, columns=['time', 'open', 'high', 'low', 'close', 'volume'])
+    df['ema'] = df['close'].ewm(span=10).mean()
+    signal = "📈 LONG" if df['close'].iloc[-1] > df['ema'].iloc[-1] else "📉 SHORT"
+    plt.figure(figsize=(10, 4))
+    plt.plot(df['close'], label='Ціна')
+    plt.plot(df['ema'], label='EMA 10')
+    plt.title(f'{symbol} — {signal}')
+    plt.legend()
+    image_path = f'{symbol.replace("/", "")}.png'
+    plt.savefig(image_path)
+    plt.close()
+    return signal, image_path
+
+@dp.callback_query_handler(lambda c: c.data == 'get_signal')
+async def process_callback(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    symbol = "BTC/USDT"
+    signal, img_path = get_signal(symbol)
+    await bot.send_photo(callback_query.from_user.id, photo=open(img_path, 'rb'),
+                         caption=f"Сигнал для {symbol}:
+<b>{signal}</b>", parse_mode="HTML")
+
+@dp.message_handler(commands=['start'])
+async def send_welcome(message: types.Message):
+    await message.reply("Привіт! Натисни кнопку, щоб отримати сигнал 👇", reply_markup=keyboard)
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
